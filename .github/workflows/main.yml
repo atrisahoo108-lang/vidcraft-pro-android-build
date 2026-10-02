@@ -1,55 +1,108 @@
-name: Build Android APK from Zip
+name: VidCraft Pro v46 - Android Debug APK
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
+  push:
+    paths:
+      - "vidcraft-pro-v46.zip"
+      - ".github/workflows/android-debug-apk-v46.yml"
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-android:
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Unzip Project File & Move Files
-        run: |
-          unzip -o *.zip
-          # If files are inside a subfolder, move them to current directory
-          if [ -dVidcraft* ] || [ -d vidcraft* ] || [ $(ls -d */ | wc -l) -eq 1 ]; then
-            mv */* . 2>/dev/null || true
-            mv */.* . 2>/dev/null || true
-          fi
-          ls -la
-
-      - name: Set up Node.js
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
-      - name: Set up JDK 17
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: temurin
+          java-version: "21"
 
-      - name: Install Dependencies & Build
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
         run: |
-          npm install
-          npm run build --if-present
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-      - name: Build Android App with Capacitor
+      - name: Find and extract v46 ZIP
+        shell: bash
         run: |
-          npx cap add android || true
-          npx cap copy android
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          set -euo pipefail
 
-      - name: Upload APK Artifact
+          ZIP_FILE="vidcraft-pro-v46.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Missing $ZIP_FILE in repository root."
+            exit 1
+          fi
+
+          mkdir -p .build-src
+          unzip -q "$ZIP_FILE" -d .build-src
+
+          PROJECT_DIR="$(find .build-src -mindepth 1 -maxdepth 3 \
+            -name package.json -type f -print -quit | xargs -r dirname)"
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/package.json" ]; then
+            echo "Could not locate package.json inside $ZIP_FILE."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Using project: $PROJECT_DIR"
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm ci
+
+      - name: Build web application
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm run build:mobile
+
+      - name: Generate Capacitor Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm run cap:add:android
+
+      - name: Sync Capacitor Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npx cap sync android
+
+      - name: Build Android debug APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          echo "APK created successfully:"
+          ls -lh "$APK"
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vidcraft-pro-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: vidcraft-pro-v46-debug-apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
           
