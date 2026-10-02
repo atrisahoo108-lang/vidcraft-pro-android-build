@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK from Zip
 
 on:
   push:
@@ -12,6 +12,11 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Unzip Project File
+        run: |
+          unzip -o *.zip
+          ls -la
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
