@@ -1,4 +1,4 @@
- name: Build VidCraft Pro APK
+name: Build VidCraft Pro APK
 
 on:
   workflow_dispatch:
