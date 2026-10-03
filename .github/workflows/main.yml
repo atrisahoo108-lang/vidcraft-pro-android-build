@@ -1,18 +1,85 @@
-name: VidCraft Pro Build
+ name: Build VidCraft Pro APK
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Extract Zip and Build
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Find, Extract ZIP & Auto Detect Project
+        shell: bash
         run: |
-          unzip *.zip
-          cd vidcraft* || true
-          npm install
-          npm run build
+          set -euo pipefail
+          
+          # Accept licenses directly
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+          # Find ZIP file
+          ZIP_FILE=$(ls *.zip | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Error: No zip file found in root!"
+            exit 1
+          fi
+
+          echo "Unzipping $ZIP_FILE..."
+          mkdir -p extracted_src
+          unzip -q "$ZIP_FILE" -d extracted_src
+
+          # Find where package.json is located
+          TARGET_DIR=$(find extracted_src -name "package.json" -exec dirname {} \; | head -n 1)
+
+          if [ -z "$TARGET_DIR" ]; then
+            echo "Error: package.json not found inside zip!"
+            exit 1
+          fi
+
+          echo "Project directory found at: $TARGET_DIR"
+          echo "PROJECT_DIR=$TARGET_DIR" >> $GITHUB_ENV
+
+      - name: Install & Build Web Assets
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          npm install --legacy-peer-deps
+          npm run build || npm run build:mobile
+
+      - name: Setup & Sync Capacitor Android
+        run: |
+          cd ${{ env.PROJECT_DIR }}
+          npx cap add android || true
+          npx cap copy android
+          npx cap sync android
+
+      - name: Build Debug APK
+        run: |
+          cd ${{ env.PROJECT_DIR }}/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VidCraft-Pro-Real-APK
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
           
